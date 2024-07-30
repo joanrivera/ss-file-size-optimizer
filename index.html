@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Paste Image and Send to Endpoint</title>
+  <style>
+    body {
+      background-color: #333;
+      display: flex;
+      flex-direction: column;
+      color: #ccc;
+      font-family: Verdana, Geneva, Tahoma, sans-serif;
+      line-height: 1.4em;
+      font-size: .9em;
+    }
+
+    #imageContainer {
+      width: 300px;
+      height: 300px;
+      border: 2px solid #2a2a2a;
+    }
+
+    #imgPlaceholder {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2em;
+      font-weight: bold;
+      color: #505050;
+    }
+
+    #info {
+      display: flex;
+      flex-direction: column;
+      color: #fff;
+      padding-top: 2em;
+    }
+
+    .notification {
+      padding: 0.5em;
+      margin: 1em 0;
+    }
+
+    .notification-success {
+      background-color: #466f46;
+      color: white;
+    }
+
+    .notification-error {
+      background-color: #6f4646;
+      color: white;
+    }
+
+    .notification-warning {
+      background-color: #6f6f46;
+      color: white;
+    }
+
+    .notification-info {
+      background-color: #46466f;
+      color: white;
+    }
+
+    #controls {
+      display: flex;
+      flex-direction: row;
+    }
+
+    #configs {
+      padding: 2em;
+    }
+
+    .userControl {
+      margin: 1em 0;
+    }
+
+    .userControl > label {
+      display: block;
+    }
+    
+    .userControl > input[type="number"] {
+      width: 4em;
+    }
+
+    img {
+      max-width: 100%;
+      max-height: 100%;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Screenshot file size optimizer</h1>
+  <div id="controls">
+    <div id="imageContainer">
+      <div id="imgPlaceholder">Ctrl+v to paste</div>
+    </div>
+    <div id="configs">
+      <div class="userControl">
+        <label for="imageQuality">Image quality:</label>
+        <input type="number" id="imageQuality" name="imageQuality" min="0" max="100" value="16">%
+      </div>
+
+      <div class="userControl">
+        <label for="maxWidth">Max width:</label>
+        <input type="number" id="maxWidth" name="maxWidth" min="10" value="5000">px
+      </div>
+      
+      <div class="userControl">
+        <label for="maxHeight">Max height:</label>
+        <input type="number" id="maxHeight" name="maxHeight" min="10" value="5000">px
+      </div>
+    </div>
+  </div>
+  <div id="info">
+    <div>
+      Original File size: <span id="originalFileSize">0</span>
+    </div>
+    <div>
+      Optimized File size: <span id="optimizedFileSize">0</span>
+    </div>
+  </div>
+
+
+  <script>
+    document.addEventListener('paste', (event) => {
+      const items = event.clipboardData.items;
+      for (let item of items) {
+        if (item.type.startsWith('image/')) {
+          resetState();
+          const file = item.getAsFile();
+          const reader = new FileReader();
+          reader.onload = function (event) {
+            const img = document.createElement('img');
+            img.src = event.target.result;
+            document.getElementById('imageContainer').innerHTML = '';
+            document.getElementById('imageContainer').appendChild(img);
+
+            // Display the file size in a human readable format
+            const fileSizeValue = document.getElementById('originalFileSize');
+            fileSizeValue.textContent = formatFileSize(file.size);
+
+            // Send the image to the endpoint
+            sendImageToEndpoint(file);
+          };
+          reader.readAsDataURL(file);
+        }
+      }
+    });
+
+    function sendImageToEndpoint(file) {
+      const formData = new FormData();
+      formData.append('image', file);
+      formData.append('imageQuality', document.getElementById('imageQuality').value);
+      formData.append('maxWidth', document.getElementById('maxWidth').value);
+      formData.append('maxHeight', document.getElementById('maxHeight').value);
+
+      fetch(`${window.location}upload`, {
+        method: 'POST',
+        body: formData
+      })
+        .then(response => response.json())
+        .then(data => {
+          displayBase64Image(data);
+        })
+        .catch((error) => {
+          console.error('Error:', error);
+          showNotification('Error processing image', 'error');
+        });
+    }
+
+    function formatFileSize(size) {
+      if (size < 1024) {
+        return `${size} bytes`;
+      } else if (size < 1024 * 1024) {
+        return `${(size / 1024).toFixed(2)} KB`;
+      } else {
+        return `${(size / (1024 * 1024)).toFixed(2)} MB`;
+      }
+    }
+
+    async function displayBase64Image(data) {
+      const img = document.createElement('img');
+      img.src = "data:image/png;base64," + data.base64;
+      const imageContainer = document.getElementById('imageContainer');
+      imageContainer.innerHTML = '';
+      imageContainer.appendChild(img);
+
+      // Display data.fileSize in a human readable format
+      const originalFileSize = document.getElementById('optimizedFileSize');
+      originalFileSize.textContent = formatFileSize(data.file_size);
+
+      copyToClipboard();
+    }
+
+    async function copyToClipboard() {
+      removeNotification();
+      const imageContainer = document.getElementById('imageContainer');
+      const img = imageContainer.querySelector('img');
+      if (img) {
+        try {
+          await navigator.clipboard.write([
+            new ClipboardItem({
+              'image/png': await fetch(img.src).then(response => response.blob())
+            })
+          ]);
+          showNotification('Image copied to clipboard. <button onclick="copyToClipboard()">Copy again</button>', 'success');
+        } catch (err) {
+          console.error('Failed to copy image: ', err);
+          showNotification('Image optimization completed. <button onclick="copyToClipboard()">Copy</button>', 'info');
+        }
+      }
+      saveSettings();
+    }
+
+    function showNotification(message, type) {
+      const notification = document.createElement('div');
+      notification.classList.add('notification');
+      notification.classList.add('notification-' + type);
+      notification.innerHTML = message;
+      const info = document.getElementById('info');
+      info.prepend(notification);
+    }
+
+    function removeNotification() {
+      const notification = document.querySelector('.notification');
+      if (notification) {
+        notification.remove();
+      }
+    }
+
+    function resetState() {
+      const originalFileSize = document.getElementById('originalFileSize');
+      originalFileSize.textContent = '0';
+      const optimizedFileSize = document.getElementById('optimizedFileSize');
+      optimizedFileSize.textContent = '0';
+      removeNotification();
+    }
+
+    
+    function saveSettings() {
+      const imageQuality = document.getElementById('imageQuality').value;
+      const maxWidth = document.getElementById('maxWidth').value;
+      const maxHeight = document.getElementById('maxHeight').value;
+      localStorage.setItem('imageQuality', imageQuality);
+      localStorage.setItem('maxWidth', maxWidth);
+      localStorage.setItem('maxHeight', maxHeight);
+    }
+    
+    document.addEventListener('DOMContentLoaded', () => {
+      const imageQuality = localStorage.getItem('imageQuality');
+      const maxWidth = localStorage.getItem('maxWidth');
+      const maxHeight = localStorage.getItem('maxHeight');
+      if (imageQuality) {
+        document.getElementById('imageQuality').value = imageQuality;
+      }
+      if (maxWidth) {
+        document.getElementById('maxWidth').value = maxWidth;
+      }
+      if (maxHeight) {
+        document.getElementById('maxHeight').value = maxHeight;
+      }
+    });
+
+  </script>
+</body>
+
+</html>
